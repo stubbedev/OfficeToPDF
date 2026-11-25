@@ -1,0 +1,56 @@
+name: build
+
+on:
+  push:
+    branches: [build/1.9.0.2-no-recalculate-fix]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: windows-2022
+    steps:
+      - uses: actions/checkout@v4
+      - uses: microsoft/setup-msbuild@v2
+      - uses: NuGet/setup-nuget@v2
+
+      - name: Restore packages
+        run: nuget restore OfficeToPDF.sln
+
+      - name: Fetch reference assemblies and Office interop
+        shell: pwsh
+        run: |
+          nuget install Microsoft.NETFramework.ReferenceAssemblies.net40 -Version 1.0.3 -OutputDirectory refs
+          $ids = 'Microsoft.Office.Interop.Excel','Microsoft.Office.Interop.Word','Microsoft.Office.Interop.PowerPoint','Microsoft.Office.Interop.Outlook','Microsoft.Office.Interop.Visio','Microsoft.Office.Interop.MSProject','Microsoft.Office.Interop.Publisher','Microsoft.Office.Interop.OneNote','MicrosoftOfficeCore'
+          foreach ($id in $ids) { nuget install $id -OutputDirectory interop -NonInteractive; if ($LASTEXITCODE) { Write-Host "::warning::$id not available on nuget.org" } }
+          $dirs = Get-ChildItem interop -Recurse -Include *.dll | ForEach-Object { $_.DirectoryName } | Sort-Object -Unique
+          $dirs | ForEach-Object { Write-Host "interop dir: $_" }
+          "REFPATH=$($dirs -join ';')" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+
+      - name: Build
+        shell: pwsh
+        run: |
+          msbuild OfficeToPDF\OfficeToPDF.csproj /v:m /p:Configuration=Release /p:Platform=x86 "/p:SolutionDir=$PWD\" "/p:TargetFrameworkRootPath=$PWD\refs\Microsoft.NETFramework.ReferenceAssemblies.net40.1.0.3\build" "/p:ReferencePath=$env:REFPATH"
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          $exe = Get-ChildItem OfficeToPDF\bin -Recurse -Filter OfficeToPDF.exe | Select-Object -First 1
+          $exe.FullName
+          $exe.VersionInfo | Format-List FileVersion, ProductVersion
+          (Get-FileHash $exe.FullName -Algorithm SHA256).Hash | Tee-Object -FilePath OfficeToPDF.exe.sha256
+          Copy-Item $exe.FullName OfficeToPDF.exe
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: OfficeToPDF
+          path: |
+            OfficeToPDF.exe
+            OfficeToPDF.exe.sha256
+
+      - name: Publish release
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $tag = "v1.9.0.2-norecalc-fix.$env:GITHUB_RUN_NUMBER"
+          gh release create $tag OfficeToPDF.exe OfficeToPDF.exe.sha256 --target $env:GITHUB_SHA --title $tag --notes "OfficeToPDF 1.9.0.2 with /excel_no_recalculate fixed for /hidden (cognidox/OfficeToPDF#99). Unofficial build, x86, .NET Framework 4.0."
