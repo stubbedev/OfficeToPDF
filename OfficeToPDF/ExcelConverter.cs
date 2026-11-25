@@ -522,6 +522,7 @@ namespace OfficeToPDF
             {
                 if ((uint)ce.ErrorCode == 0x800A03EC)
                 {
+                    Console.WriteLine(ce.ToString());
                     return (int)ExitCode.EmptyWorksheet;
                 }
                 else
