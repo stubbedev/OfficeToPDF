@@ -23,16 +23,29 @@ jobs:
         shell: pwsh
         run: |
           nuget install Microsoft.NETFramework.ReferenceAssemblies.net40 -Version 1.0.3 -OutputDirectory refs
-          $ids = 'Microsoft.Office.Interop.Excel','Microsoft.Office.Interop.Word','Microsoft.Office.Interop.PowerPoint','Microsoft.Office.Interop.Outlook','Microsoft.Office.Interop.Visio','Microsoft.Office.Interop.MSProject','Microsoft.Office.Interop.Publisher','Microsoft.Office.Interop.OneNote','MicrosoftOfficeCore'
-          foreach ($id in $ids) { nuget install $id -OutputDirectory interop -NonInteractive; if ($LASTEXITCODE) { Write-Host "::warning::$id not available on nuget.org" } }
-          $dirs = Get-ChildItem interop -Recurse -Include *.dll | ForEach-Object { $_.DirectoryName } | Sort-Object -Unique
-          $dirs | ForEach-Object { Write-Host "interop dir: $_" }
-          "REFPATH=$($dirs -join ';')" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+          $names = 'Microsoft.Office.Interop.Excel','Microsoft.Office.Interop.Word','Microsoft.Office.Interop.PowerPoint','Microsoft.Office.Interop.Outlook','Microsoft.Office.Interop.Visio','Microsoft.Office.Interop.MSProject','Microsoft.Office.Interop.Publisher','Microsoft.Office.Interop.OneNote','office'
+          $roots = 'C:\Windows\assembly','C:\Windows\Microsoft.NET\assembly','C:\Program Files\Microsoft Visual Studio','C:\Program Files (x86)\Microsoft Visual Studio','C:\Program Files (x86)\Microsoft Visual Studio 14.0','C:\Program Files (x86)\Microsoft Office','C:\Program Files\Microsoft Office'
+          $found = @{}
+          foreach ($n in $names) {
+            $hit = Get-ChildItem $roots -Recurse -Filter "$n.dll" -ErrorAction SilentlyContinue | Select-Object -First 1
+            if ($hit) { $found[$n] = $hit.DirectoryName; Write-Host "runner PIA: $($hit.FullName)" }
+          }
+          $nugetIds = @{ 'Microsoft.Office.Interop.Excel'='Microsoft.Office.Interop.Excel'; 'Microsoft.Office.Interop.Word'='Microsoft.Office.Interop.Word'; 'Microsoft.Office.Interop.PowerPoint'='Microsoft.Office.Interop.PowerPoint'; 'Microsoft.Office.Interop.Outlook'='Microsoft.Office.Interop.Outlook'; 'Microsoft.Office.Interop.Visio'='Microsoft.Office.Interop.Visio'; 'Microsoft.Office.Interop.Publisher'='Microsoft.Office.Interop.Publisher'; 'office'='MicrosoftOfficeCore' }
+          foreach ($n in $names) {
+            if ($found.ContainsKey($n) -or -not $nugetIds.ContainsKey($n)) { continue }
+            nuget install $nugetIds[$n] -OutputDirectory interop -NonInteractive | Out-Null
+            $hit = Get-ChildItem interop -Recurse -Filter "$n.dll" | Where-Object { $_.DirectoryName -match '\\lib\\net(20|35|40|45)$' } | Select-Object -First 1
+            if ($hit) { $found[$n] = $hit.DirectoryName; Write-Host "nuget PIA: $($hit.FullName)" }
+          }
+          $missing = $names | Where-Object { -not $found.ContainsKey($_) }
+          if ($missing) { Write-Host "::error::no interop assembly for: $($missing -join ', ')"; exit 1 }
+          "REFPATH=$(($found.Values | Sort-Object -Unique) -join ';')" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
 
       - name: Build
         shell: pwsh
         run: |
-          msbuild OfficeToPDF\OfficeToPDF.csproj /v:m /p:Configuration=Release /p:Platform=x86 "/p:SolutionDir=$PWD\" "/p:TargetFrameworkRootPath=$PWD\refs\Microsoft.NETFramework.ReferenceAssemblies.net40.1.0.3\build" "/p:ReferencePath=$env:REFPATH"
+          $msbuildArgs = @('OfficeToPDF\OfficeToPDF.csproj', '/v:m', '/p:Configuration=Release', '/p:Platform=x86', "/p:TargetFrameworkRootPath=$PWD\refs\Microsoft.NETFramework.ReferenceAssemblies.net40.1.0.3\build", "/p:ReferencePath=$env:REFPATH")
+          & msbuild @msbuildArgs
           if ($LASTEXITCODE) { exit $LASTEXITCODE }
           $exe = Get-ChildItem OfficeToPDF\bin -Recurse -Filter OfficeToPDF.exe | Select-Object -First 1
           $exe.FullName
