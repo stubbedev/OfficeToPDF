@@ -235,6 +235,16 @@ namespace OfficeToPDF
                     catch (Exception) { }
                 }
 
+                // Allow for re-calculation to be skipped. This has to happen while the
+                // workbook window is still visible: once /hidden hides it there is no
+                // active workbook, and Excel rejects setting Application.Calculation
+                // with 0x800A03EC, which would abort every conversion.
+                if (skipRecalculation)
+                {
+                    app.Calculation = XlCalculation.xlCalculationManual;
+                    app.CalculateBeforeSave = false;
+                }
+
                 // Keep the windows hidden
                 if (isHidden)
                 {
@@ -399,13 +409,6 @@ namespace OfficeToPDF
                     {
                         throw new Exception(String.Format("Too many rows to process ({0}) on worksheet {1}", found_rows, found_worksheet));
                     }
-                }
-
-                // Allow for re-calculation to be skipped
-                if (skipRecalculation)
-                {
-                    app.Calculation = XlCalculation.xlCalculationManual;
-                    app.CalculateBeforeSave = false;
                 }
 
                 workbook.SaveAs(tmpFile, fmt, Type.Missing, Type.Missing, Type.Missing, false, XlSaveAsAccessMode.xlNoChange, Type.Missing, false, Type.Missing, Type.Missing, Type.Missing);
